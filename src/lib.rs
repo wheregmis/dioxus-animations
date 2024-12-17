@@ -2,8 +2,8 @@ use dioxus_hooks::{use_coroutine, use_signal, Coroutine};
 use dioxus_signals::{Readable, Signal, Writable};
 use easer::functions::{Easing, Linear};
 use futures_util::StreamExt;
-use std::time::Duration;
-use tokio::time::Instant;
+use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq)]
 enum AnimationState {
@@ -14,6 +14,7 @@ enum AnimationState {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Motion {
+    id: Uuid,
     initial: f32,
     target: f32,
     duration: Duration,
@@ -24,6 +25,7 @@ pub struct Motion {
 impl Motion {
     pub fn new(initial: f32) -> Self {
         Self {
+            id: Uuid::new_v4(),
             initial,
             target: initial,
             duration: Duration::from_millis(300),
@@ -59,8 +61,10 @@ impl Motion {
 
 #[derive(Clone, Copy)]
 pub struct UseMotion {
+    id: Uuid,
     value: Signal<f32>,
-    state: Signal<AnimationState>,
+    running_state: Signal<bool>,
+    completion_state: Signal<AnimationState>,
     config: Motion,
     channel: Coroutine<()>,
 }
@@ -71,54 +75,54 @@ impl UseMotion {
     }
 
     pub fn start(&mut self) {
-        if *self.state.read() == AnimationState::Running {
-            return;
-        }
-        *self.state.write() = AnimationState::Running;
+        *self.running_state.write() = true;
         self.channel.send(());
     }
 }
 
 pub fn use_motion(config: Motion) -> UseMotion {
+    let id = Uuid::new_v4();
     let mut value = use_signal(|| config.initial);
-    let mut state = use_signal(|| AnimationState::Idle);
+    let mut running_state = use_signal(|| false);
+    let mut completion_state = use_signal(|| AnimationState::Idle);
 
-    let channel = use_coroutine(move |mut rx| {
-        let value_config = config.on_complete;
-        async move {
-            while rx.next().await.is_some() {
-                let start_time = Instant::now();
-                let start_value = *value.read();
-                let end_value = config.target;
+    let channel = use_coroutine(move |mut rx| async move {
+        while rx.next().await.is_some() {
+            let start_time = Instant::now();
+            let start_value = *value.read();
+            let end_value = config.target;
 
-                while *state.read() == AnimationState::Running {
-                    let elapsed = Instant::now().duration_since(start_time);
-                    if elapsed >= config.duration {
-                        break;
-                    }
+            running_state.set(true);
 
-                    let progress = elapsed.as_secs_f32() / config.duration.as_secs_f32();
-                    let current =
-                        (config.easing)(progress, start_value, end_value - start_value, 1.0);
-
-                    value.set(current);
-
-                    futures_timer::Delay::new(Duration::from_millis(16)).await;
+            while *running_state.read() {
+                let elapsed = Instant::now().duration_since(start_time);
+                if elapsed >= config.duration {
+                    break;
                 }
 
-                value.set(end_value);
-                state.set(AnimationState::Completed);
+                let progress = elapsed.as_secs_f32() / config.duration.as_secs_f32();
+                let current = (config.easing)(progress, start_value, end_value - start_value, 1.0);
 
-                if let Some(ref f) = value_config {
-                    f();
-                }
+                value.set(current);
+
+                futures_timer::Delay::new(Duration::from_millis(16)).await;
+            }
+
+            value.set(end_value);
+            running_state.set(false);
+            completion_state.set(AnimationState::Completed);
+
+            if let Some(ref f) = config.on_complete {
+                f();
             }
         }
     });
 
     UseMotion {
+        id,
         value,
-        state,
+        running_state,
+        completion_state,
         config,
         channel,
     }

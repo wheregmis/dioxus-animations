@@ -17,10 +17,22 @@ dioxus-core = "0.6.0"
 dioxus-hooks = "0.6.0"
 futures-util = "0.3.28"
 uuid = { version = "1.4.1", features = ["v4"] }
-tokio = { version = "1.29.1", features = ["time"] }
 futures-timer = "3.0.3"
 dioxus-signals = "0.6.0"
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 dioxus = "0.6.0"
-dioxus-desktop = "0.6.0"
+dioxus-web = "0.6.0"
+
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
