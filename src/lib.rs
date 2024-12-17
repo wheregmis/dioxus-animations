@@ -1,180 +1,130 @@
-use std::rc::Rc;
-
-use dioxus_core::ScopeState;
-use dioxus_hooks::UnboundedReceiver;
-use dioxus_hooks::{to_owned, use_coroutine, use_ref, Coroutine, RefCell, UseRef};
+use dioxus_hooks::{use_coroutine, use_signal, Coroutine};
+use dioxus_signals::{Readable, Signal, Writable};
 use easer::functions::{Easing, Linear};
 use futures_util::StreamExt;
-use instant::Duration;
-use tokio::time::interval;
-use uuid::Uuid;
+use std::{sync::Arc, time::Duration};
+use tokio::time::Instant;
 
-pub enum TransitionPhase {
-    From(f32),
-    To(f32),
+#[derive(Debug, Clone, PartialEq)]
+enum AnimationState {
+    Idle,
+    Running,
+    Completed,
 }
 
-pub enum AnimationEasing {
-    EaseIn,
-    EaseOut,
-    EaseInOut,
+#[derive(Clone)]
+pub struct Motion {
+    initial: f32,
+    target: f32,
+    duration: Duration,
+    easing: fn(f32, f32, f32, f32) -> f32,
+    on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
-// TODO: Add more functions
-pub enum Animation {
-    Linear(AnimationEasing, Duration),
-    Bounce(AnimationEasing, Duration),
-}
-
-impl Animation {
-    fn time(&self) -> &Duration {
-        match self {
-            Self::Linear(_, time) => time,
-            Self::Bounce(_, time) => time,
+impl Motion {
+    pub fn new(initial: f32) -> Self {
+        Self {
+            initial,
+            target: initial,
+            duration: Duration::from_millis(300),
+            easing: Linear::ease_in_out,
+            on_complete: None,
         }
     }
-}
 
-pub struct UseTransition {
-    value: Rc<RefCell<f32>>,
-    channel: Coroutine<(Animation, TransitionDirection)>,
-    current_id: UseRef<Option<Uuid>>,
-}
-
-enum TransitionDirection {
-    Forward,
-    Backwards,
-}
-
-impl UseTransition {
-    pub fn read(&self) -> f32 {
-        *self.value.borrow()
+    pub fn to(mut self, target: f32) -> Self {
+        self.target = target;
+        self
     }
 
-    pub fn forward(&self, animation: Animation) {
-        *self.current_id.write_silent() = Some(Uuid::new_v4());
-        self.channel.send((animation, TransitionDirection::Forward))
+    pub fn animate(self, target: f32) -> Self {
+        self.to(target)
     }
 
-    pub fn backwards(&self, animation: Animation) {
-        *self.current_id.write_silent() = Some(Uuid::new_v4());
-        self.channel
-            .send((animation, TransitionDirection::Backwards))
+    pub fn duration(mut self, duration: Duration) -> Self {
+        self.duration = duration;
+        self
+    }
+
+    pub fn easing(mut self, easing: fn(f32, f32, f32, f32) -> f32) -> Self {
+        self.easing = easing;
+        self
+    }
+
+    pub fn on_complete<F>(mut self, f: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.on_complete = Some(Arc::new(f));
+        self
     }
 }
 
-pub fn use_transition<const N: usize>(
-    cx: &ScopeState,
-    phases: impl FnOnce() -> [TransitionPhase; N],
-) -> &UseTransition {
-    let phases = cx.use_hook(phases);
-    let current_id = use_ref(cx, || None);
+#[derive(Clone)]
+pub struct UseMotion {
+    value: Signal<f32>,
+    state: Signal<AnimationState>,
+    config: Motion,
+    channel: Coroutine<()>,
+}
 
-    let (value, start_value, end_value) = cx.use_hook(|| {
-        // Find the start value
-        let start_value = phases
-            .iter()
-            .find_map(|phase| {
-                if let TransitionPhase::From(val) = phase {
-                    Some(*val)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-        // Find the end value
-        let end_value = phases
-            .iter()
-            .find_map(|phase| {
-                if let TransitionPhase::To(val) = phase {
-                    Some(*val)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-        (Rc::new(RefCell::new(start_value)), start_value, end_value)
-    });
+impl UseMotion {
+    pub fn value(&self) -> f32 {
+        *self.value.read()
+    }
 
-    let channel = use_coroutine(
-        cx,
-        |mut rx: UnboundedReceiver<(Animation, TransitionDirection)>| {
-            let schedule_update = cx.schedule_update();
-            to_owned![value, current_id, start_value, end_value];
-            async move {
-                let mut running_id = None;
-                while let Some((animation, direction)) = rx.next().await {
-                    let mut current_frame: f32 = 0.0;
-                    // TODO: This should be 16ms I think
-                    let mut ticker = interval(Duration::from_millis(1));
-                    loop {
-                        // Stop running this animation if there is a new one scheduled
-                        if running_id.is_some() && running_id != *current_id.read() {
-                            running_id = None;
-                            break;
-                        }
-                        // Save this animation ID
-                        running_id = *current_id.read();
+    pub fn start(&mut self) {
+        if *self.state.read() == AnimationState::Running {
+            return;
+        }
+        *self.state.write() = AnimationState::Running;
+        self.channel.send(());
+    }
+}
 
-                        // Tick 1ms
-                        ticker.tick().await;
-                        // TODO: This should be 16ms I think
-                        current_frame += 1.0;
+pub fn use_motion(config: Motion) -> UseMotion {
+    let mut value = use_signal(|| config.initial);
+    let mut state = use_signal(|| AnimationState::Idle);
 
-                        // Ease the animation value
-                        match &animation {
-                            Animation::Bounce(_, _) => {}
-                            Animation::Linear(easing, time) => {
-                                let time = time.as_millis() as f32;
-                                let (start_value, end_value) = match direction {
-                                    TransitionDirection::Forward => {
-                                        (start_value, end_value - start_value)
-                                    }
-                                    TransitionDirection::Backwards => {
-                                        (end_value, start_value - end_value)
-                                    }
-                                };
-                                *value.borrow_mut() = match easing {
-                                    AnimationEasing::EaseIn => {
-                                        Linear::ease_in(current_frame, start_value, end_value, time)
-                                    }
-                                    AnimationEasing::EaseInOut => Linear::ease_in_out(
-                                        current_frame,
-                                        start_value,
-                                        end_value,
-                                        time,
-                                    ),
-                                    AnimationEasing::EaseOut => Linear::ease_in_out(
-                                        current_frame,
-                                        start_value,
-                                        end_value,
-                                        time,
-                                    ),
-                                };
-                                (schedule_update)();
-                            }
-                        }
+    let config_clone = config.clone();
 
-                        let time = animation.time();
+    let channel = use_coroutine(move |mut rx| {
+        let value_config = config_clone.on_complete.clone();
+        async move {
+            while rx.next().await.is_some() {
+                let start_time = Instant::now();
+                let start_value = *value.read();
+                let end_value = config_clone.target;
 
-                        // Stop the animation once done
-                        if current_frame >= time.as_millis() as f32 {
-                            if running_id == *current_id.read() {
-                                // Remove the current animation if there is no new one scheduled
-                                *current_id.write_silent() = None;
-                                running_id = None;
-                            }
-                            break;
-                        }
+                while *state.read() == AnimationState::Running {
+                    let elapsed = Instant::now().duration_since(start_time);
+                    if elapsed >= config_clone.duration {
+                        break;
                     }
+
+                    let progress = elapsed.as_secs_f32() / config_clone.duration.as_secs_f32();
+                    let current =
+                        (config_clone.easing)(progress, start_value, end_value - start_value, 1.0);
+
+                    value.set(current);
+
+                    futures_timer::Delay::new(Duration::from_millis(16)).await;
+                }
+
+                value.set(end_value);
+                state.set(AnimationState::Completed);
+
+                if let Some(ref f) = value_config {
+                    f();
                 }
             }
-        },
-    );
+        }
+    });
 
-    cx.use_hook(|| UseTransition {
-        value: value.clone(),
-        channel: channel.clone(),
-        current_id: current_id.clone(),
-    })
+    UseMotion {
+        value,
+        state,
+        config,
+        channel,
+    }
 }
