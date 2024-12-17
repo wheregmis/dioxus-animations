@@ -2,7 +2,7 @@ use dioxus_hooks::{use_coroutine, use_signal, Coroutine};
 use dioxus_signals::{Readable, Signal, Writable};
 use easer::functions::{Easing, Linear};
 use futures_util::StreamExt;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,13 +12,13 @@ enum AnimationState {
     Completed,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Motion {
     initial: f32,
     target: f32,
     duration: Duration,
     easing: fn(f32, f32, f32, f32) -> f32,
-    on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
+    on_complete: Option<fn()>,
 }
 
 impl Motion {
@@ -51,16 +51,13 @@ impl Motion {
         self
     }
 
-    pub fn on_complete<F>(mut self, f: F) -> Self
-    where
-        F: Fn() + Send + Sync + 'static,
-    {
-        self.on_complete = Some(Arc::new(f));
+    pub fn on_complete(mut self, f: fn()) -> Self {
+        self.on_complete = Some(f);
         self
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct UseMotion {
     value: Signal<f32>,
     state: Signal<AnimationState>,
@@ -86,25 +83,23 @@ pub fn use_motion(config: Motion) -> UseMotion {
     let mut value = use_signal(|| config.initial);
     let mut state = use_signal(|| AnimationState::Idle);
 
-    let config_clone = config.clone();
-
     let channel = use_coroutine(move |mut rx| {
-        let value_config = config_clone.on_complete.clone();
+        let value_config = config.on_complete;
         async move {
             while rx.next().await.is_some() {
                 let start_time = Instant::now();
                 let start_value = *value.read();
-                let end_value = config_clone.target;
+                let end_value = config.target;
 
                 while *state.read() == AnimationState::Running {
                     let elapsed = Instant::now().duration_since(start_time);
-                    if elapsed >= config_clone.duration {
+                    if elapsed >= config.duration {
                         break;
                     }
 
-                    let progress = elapsed.as_secs_f32() / config_clone.duration.as_secs_f32();
+                    let progress = elapsed.as_secs_f32() / config.duration.as_secs_f32();
                     let current =
-                        (config_clone.easing)(progress, start_value, end_value - start_value, 1.0);
+                        (config.easing)(progress, start_value, end_value - start_value, 1.0);
 
                     value.set(current);
 
