@@ -4,7 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+dioxus-animations = { path = "../" }
 dioxus = "0.6.0"
-dioxus-animations = { path = "../", default = false, features = [
-    "wasm_animation",
-] }

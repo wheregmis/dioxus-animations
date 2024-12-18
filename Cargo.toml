@@ -18,24 +18,19 @@ categories = ["gui"]
 easer = "0.3.0"
 dioxus-core = "0.6.0"
 dioxus-hooks = "0.6.0"
-futures-util = "0.3.28"
-uuid = { version = "1.4.1", features = ["v4"] }
+futures-util = "0.3.31"
+uuid = { version = "1.11.0", features = ["v4"] }
 futures-timer = "3.0.3"
 dioxus-signals = "0.6.0"
 getrandom = { version = "0.2.15", features = ["js"] }
-instant = { version = "*", optional = true }
-web-sys = { version = "0.3", features = [
-    "Performance",
-    "Window",
-], optional = true }
-js-sys = { version = "0.3", optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
+instant = { version = "0.1.13", features = ["wasm-bindgen"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3.76", features = ["Window"] }
+futures-channel = "0.3"
 
-
-[features]
-default = ["native_animation"]
-wasm_animation = ["web-sys", "js-sys", "wasm-bindgen", "instant/wasm-bindgen"]
-native_animation = ["instant"]
+# For desktop platforms
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["time"] }
 
 [profile]
 
