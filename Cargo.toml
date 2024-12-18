@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "web_example"]
+
 [package]
 name = "dioxus-animations"
 description = "Animations library for Dioxus."
@@ -19,11 +22,20 @@ futures-util = "0.3.28"
 uuid = { version = "1.4.1", features = ["v4"] }
 futures-timer = "3.0.3"
 dioxus-signals = "0.6.0"
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.2.15", features = ["js"] }
+instant = { version = "*", optional = true }
+web-sys = { version = "0.3", features = [
+    "Performance",
+    "Window",
+], optional = true }
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
 
-[dev-dependencies]
-dioxus = "0.6.0"
-dioxus-web = "0.6.0"
+
+[features]
+default = ["native_animation"]
+wasm_animation = ["web-sys", "js-sys", "wasm-bindgen", "instant/wasm-bindgen"]
+native_animation = ["instant"]
 
 [profile]
 

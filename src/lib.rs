@@ -2,8 +2,18 @@ use dioxus_hooks::{use_coroutine, use_signal, Coroutine};
 use dioxus_signals::{Readable, Signal, Writable};
 use easer::functions::{Easing, Linear};
 use futures_util::StreamExt;
-use std::time::{Duration, Instant};
+
 use uuid::Uuid;
+
+mod platform;
+use platform::TimeProvider;
+
+// Single conditional import block for Time
+#[cfg(not(feature = "wasm_animation"))]
+use {platform::DesktopTime as Time, std::time::Duration};
+
+#[cfg(feature = "wasm_animation")]
+use {instant::Duration, platform::WebTime as Time};
 
 #[derive(Debug, Clone, PartialEq)]
 enum AnimationState {
@@ -88,14 +98,14 @@ pub fn use_motion(config: Motion) -> UseMotion {
 
     let channel = use_coroutine(move |mut rx| async move {
         while rx.next().await.is_some() {
-            let start_time = Instant::now();
+            let start_time = Time::now();
             let start_value = *value.read();
             let end_value = config.target;
 
             running_state.set(true);
 
             while *running_state.read() {
-                let elapsed = Instant::now().duration_since(start_time);
+                let elapsed = Time::now().duration_since(start_time);
                 if elapsed >= config.duration {
                     break;
                 }
@@ -105,7 +115,7 @@ pub fn use_motion(config: Motion) -> UseMotion {
 
                 value.set(current);
 
-                futures_timer::Delay::new(Duration::from_millis(16)).await;
+                Time::delay(Duration::from_millis(16)).await;
             }
 
             value.set(end_value);
